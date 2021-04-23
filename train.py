@@ -44,6 +44,10 @@ def main():
   parser.add_argument("--smart-fen-skipping", action='store_true', dest='smart_fen_skipping', help="If enabled positions that are bad training targets will be skipped during loading. Default: False")
   parser.add_argument("--random-fen-skipping", default=0, type=int, dest='random_fen_skipping', help="skip fens randomly on average random_fen_skipping before using one.")
   parser.add_argument("--resume-from-model", dest='resume_from_model', help="Initializes training using the weights from the given .pt model")
+  parser.add_argument("--save-checkpoint-per-epoch", action='store_true', help="A flag to save a checkpoint with unique filename every time an epoch is completed.")
+  parser.add_argument("--save-checkpoint-epoch-end", action='store_true', help="A flag to save a checkpoint to a file last.ckpt every time an epoch is completed.")
+  parser.add_argument("--save-checkpoint-interval", default=1, type=int, help="An option to save checkpoint at epoch interval, default=1.")
+  parser.add_argument("--num-bad-val-loss-stop-training", default=5, type=int, help="Successive number of times the val loss of an epoch did not improve before the training is stopped, default=5.")
   features.add_argparse_args(parser)
   args = parser.parse_args()
 
@@ -60,6 +64,11 @@ def main():
     nnue = torch.load(args.resume_from_model)
     nnue.set_feature_set(feature_set)
     nnue.lambda_ = args.lambda_
+
+  save_checkpoint_per_epoch = args.save_checkpoint_per_epoch
+  save_checkpoint_epoch_end = args.save_checkpoint_epoch_end
+  num_bad_val_loss_stop_training = args.num_bad_val_loss_stop_training
+  save_checkpoint_interval = args.save_checkpoint_interval
 
   print("Feature set: {}".format(feature_set.name))
   print("Num real features: {}".format(feature_set.num_real_features))
@@ -78,6 +87,10 @@ def main():
 
   print('Smart fen skipping: {}'.format(args.smart_fen_skipping))
   print('Random fen skipping: {}'.format(args.random_fen_skipping))
+  print(f'Successive bad val_loss to stop training: {num_bad_val_loss_stop_training}')
+  print(f'Save checkpoint per epoch: {save_checkpoint_per_epoch}')
+  print(f'Save checkpoint to last.ckpt: {save_checkpoint_epoch_end}')
+  print(f'Save checkpoint interval: {save_checkpoint_interval}')
 
   if args.threads > 0:
     print('limiting torch to {} threads.'.format(args.threads))
@@ -87,8 +100,23 @@ def main():
   print('Using log dir {}'.format(logdir), flush=True)
 
   tb_logger = pl_loggers.TensorBoardLogger(logdir)
-  checkpoint_callback = pl.callbacks.ModelCheckpoint(save_last=True)
-  trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback], logger=tb_logger)
+  checkpoint_callback = pl.callbacks.ModelCheckpoint(
+    save_last=True if save_checkpoint_epoch_end else None,
+    save_top_k=-1 if save_checkpoint_per_epoch else None,
+    period=save_checkpoint_interval
+  )
+
+  # If val loss is not minimized successively after patience times in an epoch, training will be stopped.
+  early_stop_callback = pl.callbacks.EarlyStopping(
+    monitor='val_loss',
+    min_delta=0.0,
+    patience=num_bad_val_loss_stop_training,
+    verbose=False,
+    mode='min',
+    strict=True
+  )
+
+  trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback, early_stop_callback], logger=tb_logger)
 
   main_device = trainer.root_device if trainer.root_gpu is None else 'cuda:' + str(trainer.root_gpu)
 
