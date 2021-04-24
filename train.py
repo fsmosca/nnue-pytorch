@@ -10,10 +10,7 @@ from torch import set_num_threads as t_set_num_threads
 from pytorch_lightning import loggers as pl_loggers
 from torch.utils.data import DataLoader, Dataset
 
-def data_loader_cc(train_filename, val_filename, feature_set, num_workers, batch_size, filtered, random_fen_skipping, main_device):
-  # Epoch and validation sizes are arbitrary
-  epoch_size = 100000000
-  val_size = 1000000
+def data_loader_cc(train_filename, val_filename, feature_set, num_workers, batch_size, filtered, random_fen_skipping, main_device, num_training_samples, num_validation_samples):
   features_name = feature_set.name
   train_infinite = nnue_dataset.SparseBatchDataset(features_name, train_filename, batch_size, num_workers=num_workers,
                                                    filtered=filtered, random_fen_skipping=random_fen_skipping, device=main_device)
@@ -21,8 +18,8 @@ def data_loader_cc(train_filename, val_filename, feature_set, num_workers, batch
                                                    random_fen_skipping=random_fen_skipping, device=main_device)
   # num_workers has to be 0 for sparse, and 1 for dense
   # it currently cannot work in parallel mode but it shouldn't need to
-  train = DataLoader(nnue_dataset.FixedNumBatchesDataset(train_infinite, (epoch_size + batch_size - 1) // batch_size), batch_size=None, batch_sampler=None)
-  val = DataLoader(nnue_dataset.FixedNumBatchesDataset(val_infinite, (val_size + batch_size - 1) // batch_size), batch_size=None, batch_sampler=None)
+  train = DataLoader(nnue_dataset.FixedNumBatchesDataset(train_infinite, (num_training_samples + batch_size - 1) // batch_size), batch_size=None, batch_sampler=None)
+  val = DataLoader(nnue_dataset.FixedNumBatchesDataset(val_infinite, (num_validation_samples + batch_size - 1) // batch_size), batch_size=None, batch_sampler=None)
   return train, val
 
 def data_loader_py(train_filename, val_filename, feature_set, batch_size, main_device):
@@ -48,6 +45,8 @@ def main():
   parser.add_argument("--save-checkpoint-epoch-end", action='store_true', help="A flag to save a checkpoint to a file last.ckpt every time an epoch is completed.")
   parser.add_argument("--save-checkpoint-interval", default=1, type=int, help="An option to save checkpoint at epoch interval, default=1.")
   parser.add_argument("--num-bad-val-loss-stop-training", default=5, type=int, help="Successive number of times the val loss of an epoch did not improve before the training is stopped, default=5.")
+  parser.add_argument("--num-training-samples", type=int, required=True, help="Number of training samples or epoch size, required.")
+  parser.add_argument("--num-validation-samples", type=int, required=True, help="Number of validation samples, required.")
   features.add_argparse_args(parser)
   args = parser.parse_args()
 
@@ -69,6 +68,8 @@ def main():
   save_checkpoint_epoch_end = args.save_checkpoint_epoch_end
   num_bad_val_loss_stop_training = args.num_bad_val_loss_stop_training
   save_checkpoint_interval = args.save_checkpoint_interval
+  num_training_samples = args.num_training_samples
+  num_validation_samples = args.num_validation_samples
 
   print("Feature set: {}".format(feature_set.name))
   print("Num real features: {}".format(feature_set.num_real_features))
@@ -91,6 +92,8 @@ def main():
   print(f'Save checkpoint per epoch: {save_checkpoint_per_epoch}')
   print(f'Save checkpoint to last.ckpt: {save_checkpoint_epoch_end}')
   print(f'Save checkpoint interval: {save_checkpoint_interval}')
+  print(f'Number of training samples: {num_training_samples}')
+  print(f'Number of validation samples: {num_validation_samples}')
 
   if args.threads > 0:
     print('limiting torch to {} threads.'.format(args.threads))
@@ -125,7 +128,7 @@ def main():
     train, val = data_loader_py(args.train, args.val, feature_set, batch_size, main_device)
   else:
     print('Using c++ data loader')
-    train, val = data_loader_cc(args.train, args.val, feature_set, args.num_workers, batch_size, args.smart_fen_skipping, args.random_fen_skipping, main_device)
+    train, val = data_loader_cc(args.train, args.val, feature_set, args.num_workers, batch_size, args.smart_fen_skipping, args.random_fen_skipping, main_device, num_training_samples, num_validation_samples)
 
   trainer.fit(nnue, train, val)
 
